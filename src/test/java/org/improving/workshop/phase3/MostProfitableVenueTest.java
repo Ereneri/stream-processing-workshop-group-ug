@@ -48,7 +48,29 @@ public class MostProfitableVenueTest {
         // build the TopologyTestDriver
         driver = new TopologyTestDriver(streamsBuilder.build(), Streams.buildProperties());
 
-        // TODO
+        eventInputTopic = driver.createInputTopic(
+            Streams.TOPIC_DATA_DEMO_EVENTS,
+            stringSerializer,
+            Streams.SERDE_EVENT_JSON.serializer()
+        );
+
+        ticketInputTopic = driver.createInputTopic(
+            Streams.TOPIC_DATA_DEMO_TICKETS,
+            stringSerializer,
+            Streams.SERDE_TICKET_JSON.serializer()
+        );
+
+        venueInputTopic = driver.createInputTopic(
+            Streams.TOPIC_DATA_DEMO_VENUES,
+            stringSerializer,
+            Streams.SERDE_VENUE_JSON.serializer()
+        );
+
+        outputTopic = driver.createOutputTopic(
+            MostProfitableVenue.OUTPUT_TOPIC,
+            stringDerializer,
+            MostProfitableVenue.MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE.deserializer()
+        );
     }
 
     @AfterEach

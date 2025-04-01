@@ -9,6 +9,7 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
 import org.improving.workshop.Streams;
+import org.improving.workshop.samples.PurchaseEventTicket;
 import org.msse.demo.mockdata.music.event.Event;
 import org.msse.demo.mockdata.music.ticket.Ticket;
 import org.msse.demo.mockdata.music.venue.Venue;
@@ -23,6 +24,8 @@ import static org.improving.workshop.Streams.*;
 public class MostProfitableVenue {
     // MUST BE PREFIXED WITH "kafka-workshop-"
     public static final String OUTPUT_TOPIC = "kafka-workshop-ticket-response"; // TODO revisit
+
+    public static final JsonSerde<MostProfitableVenue.MostProfitableVenueEvent> MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE = new JsonSerde<>(MostProfitableVenueEvent.class);
 
     /**
      * Streams app launched via main => this should implement the Topology for 'finding the most profitable venue'
