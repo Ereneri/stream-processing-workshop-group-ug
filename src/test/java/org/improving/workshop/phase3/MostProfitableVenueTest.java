@@ -9,7 +9,6 @@ import org.apache.kafka.streams.TestOutputTopic;
 import org.apache.kafka.streams.TopologyTestDriver;
 import org.apache.kafka.streams.test.TestRecord;
 import org.improving.workshop.Streams;
-import org.improving.workshop.samples.PurchaseEventTicket;
 import org.improving.workshop.utils.DataFaker;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,8 +19,7 @@ import org.msse.demo.mockdata.music.ticket.Ticket;
 import org.msse.demo.mockdata.music.venue.Venue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+
 
 public class MostProfitableVenueTest {
     private final static Serializer<String> stringSerializer = Serdes.String().serializer();
