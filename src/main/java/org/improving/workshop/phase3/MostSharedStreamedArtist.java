@@ -5,27 +5,21 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.kstream.*;
-import org.improving.workshop.Streams;
-import org.improving.workshop.samples.PurchaseEventTicket;
-import org.msse.demo.mockdata.music.event.Event;
-import org.msse.demo.mockdata.music.ticket.Ticket;
-import org.msse.demo.mockdata.music.venue.Venue;
+import org.msse.demo.mockdata.customer.profile.Customer;
+import org.msse.demo.mockdata.music.artist.Artist;
 import org.springframework.kafka.support.serializer.JsonSerde;
 
-import java.util.UUID;
+import java.util.List;
 
-import static org.apache.kafka.streams.state.Stores.persistentKeyValueStore;
-import static org.improving.workshop.Streams.*;
+import static org.improving.workshop.Streams.startStreams;
 
 @Slf4j
-public class MostProfitableVenue {
+public class MostSharedStreamedArtist {
     // MUST BE PREFIXED WITH "kafka-workshop-"
     public static final String OUTPUT_TOPIC = "kafka-workshop-ticket-response"; // TODO revisit
 
-    public static final JsonSerde<MostProfitableVenue.MostProfitableVenueEvent> MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE = new JsonSerde<>(MostProfitableVenueEvent.class);
+    public static final JsonSerde<MostSharedStreamedArtist.MostSharedStreamedArtistResult> MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE = new JsonSerde<>(MostSharedStreamedArtistResult.class);
 
     /**
      * Streams app launched via main => this should implement the Topology for 'finding the most profitable venue'
@@ -48,12 +42,12 @@ public class MostProfitableVenue {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class MostProfitableVenueEvent {
+    public static class MostSharedStreamedArtistResult {
         // key
-        private String venueId;
+        private String artistId;
         // values
-        private double totalVenueRevenue;
-        private String venueName;
+        private Artist artist;
+        private List<Customer> customerList;
     }
 
     // TODO make classes for merging joins
