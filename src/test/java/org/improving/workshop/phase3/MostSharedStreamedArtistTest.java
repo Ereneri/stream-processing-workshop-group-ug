@@ -21,7 +21,13 @@ import org.msse.demo.mockdata.music.stream.Stream;
 import org.msse.demo.mockdata.music.ticket.Ticket;
 import org.msse.demo.mockdata.music.venue.Venue;
 
+import javax.xml.crypto.Data;
+
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class MostSharedStreamedArtistTest {
     private final static Serializer<String> stringSerializer = Serdes.String().serializer();
@@ -79,81 +85,159 @@ public class MostSharedStreamedArtistTest {
     }
 
     @Test
-    @DisplayName("most profitable venue")
+    @DisplayName("most shared streamed artist test")
     void testMostProfitableVenue() {
         /**
-         * Testing Idea:
-         * create 2 Venues, v0, and v1 => v1 will be our more profitable
-         * create 4 events, two per venue => used so we can attach tickets to a venue
-         * create 2 fake tickets for per event, there for 8 total tickets
-         *   - manually set the tickets s.t. event, e0, to be + 1 than e1 tickets
-         *   - This can be done by looping 4 times and creating 4 tickets, but splitting into e0 and e1 but have e0 + 1 the ticket price
+         * Have 3 artists, artist-1, artist-2, artist-3
+         * - will attempt to have them shuffle through to show tumbling window
+         * - will be artist-1, then artist-2, last artist-3
+         *
+         * Customers will not matter, fully random
+         * Will need to track number of streams per artist
+         * For all rounds new customers will be created
+         *
+         * Round #1
+         * - will have artist-1 get 3 streams
+         * - will have artist-2 get 1 stream
+         * - will have artist-3 get 1 stream
+         * = Result of tumbling window => artist-1, customers from those 3 streams
+         *
+         * Round #2
+         * - will have artist-1 get 0 streams
+         * - will have artist-2 get 3 stream
+         * - will have artist-3 get 1 stream
+         * = Result of tumbling window => artist-2, customers from those 3 streams
+         *
+         * Round #3
+         * - will have artist-1 get 3 streams
+         * - will have artist-2 get 1 stream
+         * - will have artist-3 get 5 stream
+         * = Result of tumbling window => artist-3, customers from those 5 streams
          */
+        String artist1 = "artist-1";
+        String artist2 = "artist-2";
+        String artist3 = "artist-3";
 
-        String venue0 = "venue-0";
-        String venue1 = "venue-1";
-        Integer maxCap = 1000;
+        // Create the 3 artists
+        artistInputTopic.pipeInput(DataFaker.ARTISTS.generate(artist1));
+        artistInputTopic.pipeInput(DataFaker.ARTISTS.generate(artist2));
+        artistInputTopic.pipeInput(DataFaker.ARTISTS.generate(artist3));
 
-        // Create venues
-        String[] venueIds = {venue0, venue1};
-        for (int i = 0; i < venueIds.length; i++) {
-            String venueId = venueIds[i];
-            venueInputTopic.pipeInput(venueId, new Venue(venueId, "venue-address", venueId + "-name", maxCap));
+        // Round #1
+        List<String> round1CustomerIds = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            Customer c = DataFaker.CUSTOMERS.generate();
+            round1CustomerIds.add(c.id());
+            customerInputTopic.pipeInput(c);
         }
 
-        // Create 2 events for each venue
-        for (int i = 0; i < 4; i++) {
-            String eventId = "event-" + i;
-            String artistId = "artist-" + i;
-            // for i over 2 its for venue, therefore, 2,3 are for venue 1 therefore venue one will have the greater ticket prices
-            String venueId = (i < 2) ? venue0 : venue1;
-            eventInputTopic.pipeInput(DataFaker.EVENTS.generate(eventId, artistId, venueId, maxCap));
-        }
+        // Create streams for Round #1
+        // artist-1: 3 streams
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(0), artist1));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(1), artist1));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(2), artist1));
 
-        // Create tickets - 2 per event
-        double[] prices = {10.0, 10.0, 20.0, 20.0};
-        for (int batch = 0; batch < 2; batch++) {
-            for (int i = 0; i < 4; i++) {
-                String eventId = "event-" + i;
-                double price = prices[i]; // this works because events 2-3 will be $20
-                Ticket ticket = new Ticket(DataFaker.TICKETS.randomId(), "customer", eventId, price);
-                ticketInputTopic.pipeInput(ticket);
-            }
-        }
+        // artist-2: 1 stream
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(3), artist2));
 
-        // reading out records
+        // artist-3: 1 stream
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(4), artist3));
+
+        // Advance the wall clock time to end the first window
+        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
+
+        // Verify Round #1 results
         var outputRecords = outputTopic.readRecordsToList();
+        TestRecord<String, MostSharedStreamedArtist.MostSharedStreamedArtistResult> round1Result = outputRecords.getLast();
 
-        // expected records => 2 + 4 + 8 = 14
-        assertEquals(12, outputRecords.size());
+        assertEquals(artist1, round1Result.key());
+        assertEquals(artist1, round1Result.value().getArtistId());
+        assertEquals(3, round1Result.value().getCustomerList().size());
+        // Verify the right customers are in the result
+        List<String> resultCustomerIds = round1Result.value().getCustomerList().stream()
+            .map(Customer::id)
+            .toList();
+        assertTrue(resultCustomerIds.contains(round1CustomerIds.get(0)));
+        assertTrue(resultCustomerIds.contains(round1CustomerIds.get(1)));
+        assertTrue(resultCustomerIds.contains(round1CustomerIds.get(2)));
 
-        // string will be the venueId
-        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> mostProfitableVenueEvent = outputRecords.getLast();
-
-        assertEquals(venue1, mostProfitableVenueEvent.key());
-        assertEquals(80.0, mostProfitableVenueEvent.value().getTotalVenueRevenue());
-        assertEquals(venue1, mostProfitableVenueEvent.value().getVenueId());
-        assertEquals("venue1-name", mostProfitableVenueEvent.value().getVenueName());
-
-        // now we can add 4 more tickets so venue 0 will have a greater value
-        eventInputTopic.pipeInput(DataFaker.EVENTS.generate("event-5", "artist-5", venue0, maxCap));
+        // Round #2
+        List<String> round2CustomerIds = new ArrayList<>();
         for (int i = 0; i < 4; i++) {
-            String eventId = "event-1" + i;
-            Ticket ticket = new Ticket(DataFaker.TICKETS.randomId(), "customer", eventId, 20.0);
-            ticketInputTopic.pipeInput(ticket);
+            Customer c = DataFaker.CUSTOMERS.generate();
+            round2CustomerIds.add(c.id());
+            customerInputTopic.pipeInput(c);
         }
 
-        var latestRecords = outputTopic.readRecordsToList();
+        // Create streams for Round #2
+        // artist-1: 0 streams
 
-        // should be the new event and then 4 new tickets
-        assertEquals(17, outputRecords.size());
+        // artist-2: 3 streams
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(0), artist2));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(1), artist2));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(2), artist2));
 
-        // string will be the venueId
-        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> latestMostProfitableVenueEvent = outputRecords.getLast();
+        // artist-3: 1 stream
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(3), artist3));
 
-        assertEquals(venue1, latestMostProfitableVenueEvent.key());
-        assertEquals(120.0, latestMostProfitableVenueEvent.value().getTotalVenueRevenue());
-        assertEquals(venue1, latestMostProfitableVenueEvent.value().getVenueId());
-        assertEquals("venue0-name", latestMostProfitableVenueEvent.value().getVenueName());
+        // Advance the wall clock time to end the second window
+        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
+
+        // Verify Round #2 results
+        outputRecords = outputTopic.readRecordsToList();
+        TestRecord<String, MostSharedStreamedArtist.MostSharedStreamedArtistResult> round2Result =
+            outputRecords.get(outputRecords.size() - 1);
+
+        assertEquals(artist2, round2Result.key());
+        assertEquals(artist2, round2Result.value().getArtistId());
+        assertEquals(3, round2Result.value().getCustomerList().size());
+        // Verify the right customers are in the result
+        resultCustomerIds = round2Result.value().getCustomerList().stream()
+            .map(Customer::id)
+            .toList();
+        assertTrue(resultCustomerIds.contains(round2CustomerIds.get(0)));
+        assertTrue(resultCustomerIds.contains(round2CustomerIds.get(1)));
+        assertTrue(resultCustomerIds.contains(round2CustomerIds.get(2)));
+
+        // Round #3
+        List<String> round3CustomerIds = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            Customer c = DataFaker.CUSTOMERS.generate();
+            round3CustomerIds.add(c.id());
+            customerInputTopic.pipeInput(c);
+        }
+
+        // Create streams for Round #3
+        // artist-1: 3 streams
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(0), artist1));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(1), artist1));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(2), artist1));
+
+        // artist-2: 1 stream
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(3), artist2));
+
+        // artist-3: 5 streams
+        for (int i = 4; i < 9; i++) {
+            streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(i), artist3));
+        }
+
+        // Advance the wall clock time to end the third window
+        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
+
+        // Verify Round #3 results
+        outputRecords = outputTopic.readRecordsToList();
+        TestRecord<String, MostSharedStreamedArtist.MostSharedStreamedArtistResult> round3Result =
+            outputRecords.get(outputRecords.size() - 1);
+
+        assertEquals(artist3, round3Result.key());
+        assertEquals(artist3, round3Result.value().getArtistId());
+        assertEquals(5, round3Result.value().getCustomerList().size());
+        // Verify the right customers are in the result
+        resultCustomerIds = round3Result.value().getCustomerList().stream()
+            .map(Customer::id)
+            .toList();
+        for (int i = 4; i < 9; i++) {
+            assertTrue(resultCustomerIds.contains(round3CustomerIds.get(i)));
+        }
     }
 }
