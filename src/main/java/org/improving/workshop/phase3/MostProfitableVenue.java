@@ -10,9 +10,14 @@ import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
 import org.improving.workshop.samples.PurchaseEventTicket;
 import org.msse.demo.mockdata.music.event.Event;
+import org.msse.demo.mockdata.music.ticket.Ticket;
 import org.msse.demo.mockdata.music.venue.Venue;
 import org.springframework.kafka.support.serializer.JsonSerde;
 
+
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.apache.kafka.streams.state.Stores.persistentKeyValueStore;
 import static org.improving.workshop.Streams.*;
@@ -20,7 +25,7 @@ import static org.improving.workshop.Streams.*;
 @Slf4j
 public class MostProfitableVenue {
     // MUST BE PREFIXED WITH "kafka-workshop-"
-    public static final String OUTPUT_TOPIC = "kafka-workshop-ticket-response"; // TODO revisit
+    public static final String OUTPUT_TOPIC = "kafka-workshop-most-profitable-venue"; // TODO revisit
 
     public static final JsonSerde<MostProfitableVenue.MostProfitableVenueEvent> MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE = new JsonSerde<>(MostProfitableVenueEvent.class);
     public static final JsonSerde<MostProfitableVenue.EventProfit> EVENT_PROFIT_JSON_SERDE = new JsonSerde<>(EventProfit.class);
@@ -33,6 +38,8 @@ public class MostProfitableVenue {
 
         // configure the processing topology
         configureTopology(builder);
+
+        startStreams(builder);
     }
 
     static void configureTopology(final StreamsBuilder builder) {
@@ -57,7 +64,7 @@ public class MostProfitableVenue {
             );
 
         builder
-            .stream(TOPIC_DATA_DEMO_EVENTS, Consumed.with(Serdes.String(), SERDE_TICKET_JSON))
+            .stream(TOPIC_DATA_DEMO_TICKETS, Consumed.with(Serdes.String(), SERDE_TICKET_JSON))
             .peek((ticketId, ticketRequest) -> log.info("Ticket Requested: {}", ticketRequest))
 
             // need to rekey and group them by eventId
@@ -68,8 +75,9 @@ public class MostProfitableVenue {
                 eventsTable,
                 (eventId, ticket, event) -> new PurchaseEventTicket.EventTicket(ticket, event)
             )
-            .peek((ticketId, ticket) -> log.info("Ticket Requested JOINED: {}", ticket))
+            .peek((ticketId, ticket) -> log.info("Ticket {} Requested JOINED: {}", ticketId, ticket))
 
+            // group by eventId => already keyed by groupId
             .groupByKey()
 
             // time to aggregate the tickets
@@ -97,9 +105,10 @@ public class MostProfitableVenue {
             // Rekey EventProfit by venueId, get that from the Event.getVenueId()
             .toStream()
 
-            .map((eventId, eventProfit) -> KeyValue.pair(eventProfit.venueId, eventProfit))
+            // rekey venueId
+            .selectKey((eventId, eventProfit) -> eventProfit.getVenueId())
 
-            // Group by venue
+            // Group by venueId from our rekey above
             .groupByKey()
 
             // Aggregate the grouped EventTickets, to get aggregate of MostProfitableVenueEvent
@@ -107,13 +116,8 @@ public class MostProfitableVenue {
                 MostProfitableVenueEvent::new,
 
                 (venueId, eventProfit, venueEvent) -> {
-                    if (!venueEvent.initialized) {
-                        // TODO bc fuck idk how we get the venue Name here?
-                        venueEvent.initialize(venueId);
-                    }
-
                     // Add the event revenue to the venue total
-                    venueEvent.addEventRevenue(eventProfit.getProfit());
+                    venueEvent.addEventRevenue(eventProfit.getProfit(), venueId);
                     return venueEvent;
                 },
 
@@ -125,7 +129,22 @@ public class MostProfitableVenue {
 
             .toStream()
 
-            .peek((venueId, mostProfitableVenue) -> log.info("Venue '{}' has most revenue of ${}", mostProfitableVenue.venueName, mostProfitableVenue.totalVenueRevenue))
+            // join out MostProfitableVenueEvent to a Venue => already rekeyed to be venueId
+            .peek((venueId, mostProfitableVenueEvent) -> log.info("Venue {} has {}", venueId, mostProfitableVenueEvent))
+            .join(
+                venueTable,
+                (mostProfitableVenueEvent, venue) -> {
+                    // Update venue name from actual venue object
+                    mostProfitableVenueEvent.setCurrentMaxVenueName(venue.name());
+                    return mostProfitableVenueEvent;
+                }
+            )
+            .peek((venueId, eventVenue) -> log.info("Venue {} has JOINED {}", venueId, eventVenue))
+
+            // rekey our venueId to be the max
+            .selectKey((venueId, mostProfitableVenue) -> mostProfitableVenue.getCurrentMaxVenueId())
+
+            .peek((venueId, mostProfitableVenue) -> log.info("Venue {} has most revenue of ${}", venueId, mostProfitableVenue.getCurrentMaxTotalVenueRevenue()))
 
             .to(OUTPUT_TOPIC, Produced.with(Serdes.String(), MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE));
     }
@@ -134,25 +153,35 @@ public class MostProfitableVenue {
     @Data
     @Builder
     @AllArgsConstructor
+    // TODO update so we save a map of the venues and a current max
     public static class MostProfitableVenueEvent {
-        private boolean initialized;
-        private String venueId;
-        private String venueName;
-        private double totalVenueRevenue;
+        private String currentMaxVenueId;
+        private String currentMaxVenueName;
+        private double currentMaxTotalVenueRevenue;
+        // store a map from venueId to its revenue amount
+        private Map<String, Double> venueRevenueMap;
 
         // constructor not init
-        public MostProfitableVenueEvent() { initialized = false; }
-
-        // init constructor
-        public void initialize(String venueId) {
-            this.initialized = true;
-            this.venueId = venueId;
-            this.venueName = venueId;
-            this.totalVenueRevenue = 0.0;
+        public MostProfitableVenueEvent() {
+            this.currentMaxVenueId = null;
+            this.currentMaxVenueName = null;
+            this.currentMaxTotalVenueRevenue = 0.0;
+            this.venueRevenueMap = new HashMap<>();
         }
 
-        public void addEventRevenue(double eventRevenue) {
-            this.totalVenueRevenue += eventRevenue;
+        public void addEventRevenue(double eventRevenue, String venueId) {
+            // check if this venueId exists, else put it into map
+            if (!venueRevenueMap.containsKey(venueId)) {
+                venueRevenueMap.put(venueId, 0.0);
+            }
+            // index into map, update venue revenue map
+            venueRevenueMap.replace(venueId, venueRevenueMap.get(venueId) + eventRevenue);
+
+            // check if it's greater than current max then update accordingly
+            if (this.currentMaxTotalVenueRevenue < venueRevenueMap.get(venueId)) {
+                this.currentMaxTotalVenueRevenue = venueRevenueMap.get(venueId);
+                this.currentMaxVenueId = venueId;
+            }
         }
     }
 

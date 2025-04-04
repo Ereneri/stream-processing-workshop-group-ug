@@ -92,23 +92,20 @@ public class MostProfitableVenueTest {
         String venue1 = "venue-1";
         Integer maxCap = 1000;
 
-        // Create venues
-        String[] venueIds = {venue0, venue1};
-        for (int i = 0; i < venueIds.length; i++) {
-            String venueId = venueIds[i];
-            venueInputTopic.pipeInput(venueId, new Venue(venueId, "venue-address", venueId + "-name", maxCap));
-        }
+        // Create 2 venues
+        venueInputTopic.pipeInput(venue0, new Venue(venue0, "venue-address", "venue-0-name", maxCap));
+        venueInputTopic.pipeInput(venue1, new Venue(venue1, "venue-address", "venue-1-name", maxCap));
 
-        // Create 2 events for each venue
+        // Create 2 events for each venue => therefore 4 events total
         for (int i = 0; i < 4; i++) {
             String eventId = "event-" + i;
             String artistId = "artist-" + i;
             // for i over 2 its for venue, therefore, 2,3 are for venue 1 therefore venue one will have the greater ticket prices
             String venueId = (i < 2) ? venue0 : venue1;
-            eventInputTopic.pipeInput(DataFaker.EVENTS.generate(eventId, artistId, venueId, maxCap));
+            eventInputTopic.pipeInput(eventId, DataFaker.EVENTS.generate(eventId, artistId, venueId, maxCap));
         }
 
-        // Create tickets - 2 per event
+        // Create tickets - 2 per event for => 8 tickets total
         double[] prices = {10.0, 10.0, 20.0, 20.0};
         for (int batch = 0; batch < 2; batch++) {
             for (int i = 0; i < 4; i++) {
@@ -122,36 +119,36 @@ public class MostProfitableVenueTest {
         // reading out records
         var outputRecords = outputTopic.readRecordsToList();
 
-        // expected records => 2 + 4 + 8 = 14
-        assertEquals(12, outputRecords.size());
+        // expect 8 ticket records
+        assertEquals(8, outputRecords.size());
 
         // string will be the venueId
         TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> mostProfitableVenueEvent = outputRecords.getLast();
 
         assertEquals(venue1, mostProfitableVenueEvent.key());
-        assertEquals(80.0, mostProfitableVenueEvent.value().getTotalVenueRevenue());
-        assertEquals(venue1, mostProfitableVenueEvent.value().getVenueId());
-        assertEquals("venue1-name", mostProfitableVenueEvent.value().getVenueName());
+        assertEquals(120.0, mostProfitableVenueEvent.value().getCurrentMaxTotalVenueRevenue());
+        assertEquals(venue1, mostProfitableVenueEvent.value().getCurrentMaxVenueId());
+        assertEquals("venue-1-name", mostProfitableVenueEvent.value().getCurrentMaxVenueName());
 
-        // now we can add 4 more tickets so venue 0 will have a greater value
-        eventInputTopic.pipeInput(DataFaker.EVENTS.generate("event-5", "artist-5", venue0, maxCap));
+        // now we can add 4 more tickets so venue 0 will have a greater value => 4 * 20 => $80 for venue0 + $40 = 120
         for (int i = 0; i < 4; i++) {
             String eventId = "event-1" + i;
+            eventInputTopic.pipeInput(eventId, DataFaker.EVENTS.generate(eventId, "artist", venue0, maxCap));
             Ticket ticket = new Ticket(DataFaker.TICKETS.randomId(), "customer", eventId, 20.0);
             ticketInputTopic.pipeInput(ticket);
         }
 
         var latestRecords = outputTopic.readRecordsToList();
 
-        // should be the new event and then 4 new tickets
-        assertEquals(17, outputRecords.size());
+        // should be the 4 new tickets
+        assertEquals(4, latestRecords.size());
 
         // string will be the venueId
-        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> latestMostProfitableVenueEvent = outputRecords.getLast();
+        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> latestMostProfitableVenueEvent = latestRecords.getLast();
 
-        assertEquals(venue1, latestMostProfitableVenueEvent.key());
-        assertEquals(120.0, latestMostProfitableVenueEvent.value().getTotalVenueRevenue());
-        assertEquals(venue1, latestMostProfitableVenueEvent.value().getVenueId());
-        assertEquals("venue0-name", latestMostProfitableVenueEvent.value().getVenueName());
+        assertEquals(venue0, latestMostProfitableVenueEvent.key());
+        assertEquals(140.0, latestMostProfitableVenueEvent.value().getCurrentMaxTotalVenueRevenue());
+        assertEquals(venue0, latestMostProfitableVenueEvent.value().getCurrentMaxVenueId());
+        assertEquals("venue-0-name", latestMostProfitableVenueEvent.value().getCurrentMaxVenueName());
     }
 }
