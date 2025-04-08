@@ -92,13 +92,13 @@ public class MostSharedStreamedArtist {
              * and determines which artist has the highest total stream time
              */
             .aggregate(
-                // Initialize the aggregate as an empty TopArtistPerCustomer
                 TopArtistPerCustomer::new,
-                // Aggregator: update the TopArtistPerCustomer instance with each stream event
+
                 (customerId, customerStream, aggregate) -> {
-                    // Update artist stream time for this customer
+                    log.info("TopArtistPerCustomer {}", aggregate.topArtistCount);
                     String artistId = customerStream.getStream().artistid();
                     aggregate.addStreamTime(artistId, customerStream.getCustomer());
+                    log.info("TopArtistPerCustomer AFTER {}", aggregate.topArtistCount);
                     return aggregate;
                 },
                 Materialized.<String, TopArtistPerCustomer, WindowStore<Bytes, byte[]>>as("top-artist-per-customer-store")
@@ -108,12 +108,12 @@ public class MostSharedStreamedArtist {
 
             .toStream()
 
-//            .peek((windowKey, topArtistPerCustomer) -> log.info("WindowKey: `{}` with topArtistPerCustomer: {}", windowKey, topArtistPerCustomer))
+            .peek((windowKey, topArtistPerCustomer) -> log.info("WindowKey: `{}` with topArtistPerCustomer: {}", windowKey, topArtistPerCustomer))
 
             // Extract just the key without the window information
             .selectKey((windowKey, topArtistPerCustomer) -> topArtistPerCustomer.getTopArtistId())
 
-            .peek((artistId, topArtistPerCustomer) -> log.info("Artist ID: {}, Top Artist: {}", artistId, topArtistPerCustomer.getTopArtistId()))
+            .peek((artistId, topArtistPerCustomer) -> log.info("Artist ID: {}, Artist Count: {}", artistId, topArtistPerCustomer.getTopArtistCount()))
 
             // join the artist into our streamedArtistResult
             .join(
@@ -139,21 +139,21 @@ public class MostSharedStreamedArtist {
         private List<Customer> customerList;
     }
 
-    @Data
-    @AllArgsConstructor
     /**
      * Class used for our Customer Stream Join
      */
+    @Data
+    @AllArgsConstructor
     public static class CustomerStream {
         private Customer customer;
         private Stream stream;
     }
 
-    @Data
-    @NoArgsConstructor
     /**
      * Used by aggregator to keep track of the top artist for each customer
      */
+    @Data
+    @NoArgsConstructor
     public static class TopArtistPerCustomer {
         // store mapping of customerId, to a map of ArtistId to count
         private Map<String, Map<String, Integer>> customerArtistStreams = new HashMap<>();
@@ -170,12 +170,10 @@ public class MostSharedStreamedArtist {
 
         public void addStreamTime(String artistId, Customer customer) {
             String customerId = customer.id();
-            customerMap.put(customerId, customer);
+            customerMap.putIfAbsent(customerId, customer);
 
             // init the map if case it's empty
-            if (!customerArtistStreams.containsKey(customer.id())) {
-                customerArtistStreams.put(customer.id(), new HashMap<>());
-            }
+            customerArtistStreams.putIfAbsent(customer.id(), new HashMap<>());
 
             // increment this customer's stream count
             Map<String, Integer> customerStreams = customerArtistStreams.get(customerId);
