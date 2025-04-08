@@ -1,9 +1,6 @@
 package org.improving.workshop.phase3;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
@@ -21,6 +18,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 
 import static org.apache.kafka.streams.state.Stores.persistentKeyValueStore;
 import static org.improving.workshop.Streams.*;
@@ -32,10 +30,9 @@ public class MostSharedStreamedArtist {
 
     public static final JsonSerde<MostSharedStreamedArtistResult> MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE =
         new JsonSerde<>(MostSharedStreamedArtistResult.class);
+
     public static final JsonSerde<TopArtistPerCustomer> TOP_ARTIST_PER_CUSTOMER_JSON_SERDE =
         new JsonSerde<>(TopArtistPerCustomer.class);
-    public static final JsonSerde<CustomerList> CUSTOMER_LIST_JSON_SERDE =
-        new JsonSerde<>(CustomerList.class);
 
     /**
      * Streams app launched via main => this should implement the Topology for 'finding customers with same #1 artist'
@@ -73,106 +70,68 @@ public class MostSharedStreamedArtist {
 
         TimeWindows tumblingWindow = TimeWindows.of(Duration.ofMinutes(5));
 
+        customerKTable.toStream().peek((key, customer) -> log.info("Customer added with ID '{}'", key, customer.id()));
+        artistKTable.toStream().peek((key, artist) -> log.info("Artist added with ID '{}'", key, artist.id()));
+
         // Process the stream events
         builder
             .stream(TOPIC_DATA_DEMO_STREAMS, Consumed.with(Serdes.String(), SERDE_STREAM_JSON))
-            .peek((streamId, streamRequest) -> log.info("Stream ID: {}, Request: {}", streamId, streamRequest))
+            .peek((streamId, streamRequest) -> log.info("Stream Request: {}", streamRequest))
+
+            // rekey by the streamId
+            .selectKey((streamId, streamRequest) -> streamRequest.customerid(), Named.as("rekey-by-customerid"))
 
             // Join with customers table to get customer information
             .join(
                 customerKTable,
-                (customerId, stream, customer) -> new CustomerStream(customer, stream),
-                Joined.with(Serdes.String(), SERDE_STREAM_JSON, SERDE_CUSTOMER_JSON)
+                (customerId, stream, customer) -> new CustomerStream(customer, stream)
             )
-            .peek((streamId, customerStream) -> log.info("Stream ID: {}, Customer-Stream: {}", streamId, customerStream))
-
-            // Rekey based on customerId for aggregation per customer
-            .selectKey((streamId, customerStream) -> customerStream.getCustomer().id())
             .peek((customerId, customerStream) -> log.info("Customer ID: {}, Customer-Stream: {}", customerId, customerStream))
 
             // Group by customer ID
             .groupByKey()
 
+            .windowedBy(tumblingWindow)
+
             /**
-             * TODO README
              * This aggregate is creating an object which stores a key-value pair of a customer to another key-value pair.
              * This inner key-value pair maps a artistID to total stream time for this artist, for a given customer
              * this can be used later to determine which artist has the highest total stream time
              * Using this we should be able to find all the customers who have this artist as their #1 streamed artist
              */
             .aggregate(
+                // Initialize the aggregate as an empty TopArtistPerCustomer
                 TopArtistPerCustomer::new,
-
-                (customerId, customerStream, topArtistData) -> {
-                    topArtistData.addStreamTime(customerStream.stream.artistid(), customerStream.customer, customerStream.stream.streamtime());
-                    return topArtistData;
+                // Aggregator: update the TopArtistPerCustomer instance with each stream event
+                (globalKey, customerStream, aggregate) -> {
+                    // Assume Stream has methods getArtistId() and getStreamTime() that return the required values
+                    aggregate.addStreamTime(
+                        customerStream.getStream().artistid(),
+                        customerStream.getCustomer(),
+                        customerStream.getStream().streamtime()
+                    );
+                    return aggregate;
                 },
-                Materialized
-                    .<String, TopArtistPerCustomer>as(persistentKeyValueStore("top-artist-per-customer"))
+                Materialized.<String, TopArtistPerCustomer, WindowStore<Bytes, byte[]>>as("global-top-artist-store")
                     .withKeySerde(Serdes.String())
                     .withValueSerde(TOP_ARTIST_PER_CUSTOMER_JSON_SERDE)
             )
 
-            // Convert back to stream
-            .toStream()
-            .peek((customerId, topArtistData) -> log.info("Customer ID: {}, Top-Artist-Data: {}", customerId, topArtistData))
-
-            // Re-key by top artist ID
-            .selectKey((artistId, topArtistData) -> topArtistData.topArtistId())
-            .peek((artistId, topArtistData) -> log.info("Top-Artist-ID: {}, Top-Artist-Data: {}", artistId, topArtistData))
-
-            // Group streams by artist ID
-            .groupByKey()
-
-            // Use tumbling window of 5 minutes
-            .windowedBy(tumblingWindow)
-
-            /**
-             * TODO README
-             * The goal of this aggregate is to use the previous aggregate to determine the
-             * #1 streamed artist, find all the customers who have this as their #1 too and add them
-             */
-            .aggregate(
-                CustomerList::new,
-
-                (artistId, topArtistData, customerList) -> {
-
-                }
-
-                Materialized
-                    .<String, CustomerList, WindowStore<Bytes, byte[]>>as(persistentKeyValueStore("customers-per-top-artist"))
-                    .withKeySerde(Serdes.String())
-                    .withValueSerde(CUSTOMER_LIST_JSON_SERDE)
-            )
-
-            // Convert back to stream
             .toStream()
 
-            // Join with artist table to include artist details
-            .join(
-                artistKTable,
-                (key, customerList, artist) -> {
-                    return MostSharedStreamedArtistResult.builder()
-                        .artistId(key.key())  // Extract key from windowed key
-                        .artist(artist)
-                        .customerList(customerList.get())
-                        .build();
-                },
-                Joined.with(
-                    WindowedSerdes.timeWindowedSerdeFrom(String.class, 5 * 60 * 1000),
-                    CUSTOMER_LIST_JSON_SERDE,
-                    SERDE_ARTIST_JSON
-                )
-            )
+            // rekey and map our windowedkey to be a key value pair of the top artist id and the list of customers
+            .map((windowedKey, topArtistPerCustomer) -> {
+                MostSharedStreamedArtistResult streamedArtistResult = new MostSharedStreamedArtistResult(topArtistPerCustomer.getTopArtistId(), null ,topArtistPerCustomer.getTopArtistCustomers());
+                return KeyValue.pair(topArtistPerCustomer.getTopArtistId(), streamedArtistResult);
+            })
 
-            // Output to result topic
-            .to(
-                OUTPUT_TOPIC,
-                Produced.with(
-                    WindowedSerdes.timeWindowedSerdeFrom(String.class, 5 * 60 * 1000),
-                    MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE
-                )
-            );
+            // join the artist into our streamedArtistResult
+            .join(artistKTable, (result, artist) -> {
+                result.setArtist(artist);
+                return result;
+            })
+
+            .to(OUTPUT_TOPIC, Produced.with(Serdes.String(), MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE));
     }
 
     @Data
@@ -180,77 +139,110 @@ public class MostSharedStreamedArtist {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class MostSharedStreamedArtistResult {
-        // key
         private String artistId;
-        // values
         private Artist artist;
         private List<Customer> customerList;
     }
 
     @Data
-    @NoArgsConstructor
-    public static class CustomerList {
-        private List<Customer> customers = new ArrayList<>();
-
-        public void addCustomer(Customer customer) {
-            if (customers == null) {
-                customers = new ArrayList<>();
-            }
-            customers.add(customer);
-        }
-    }
-
-    @Data
     @AllArgsConstructor
+    /**
+     * Class used for our Custerm Stream Join
+     */
     public static class CustomerStream {
         private Customer customer;
         private Stream stream;
     }
 
     @Data
-    @NoArgsConstructor
-    public static class TopArtistPerCustomer {
-        // key is artist id and value is total stream time
-        private HashMap<Customer, HashMap<String, Long>> customerStreamTimes = new HashMap<>();
+    @AllArgsConstructor
+    /**
+     * Used as internal aggregate helper obejct
+     */
+    public static class CustomerStreamTime {
         private Customer customer;
+        private HashMap<String, Long> streamTimesMap;
+        @Getter
+        private Long topArtistTime;
+        private String topArtistId;
 
-        public void addStreamTime(String artistId, Customer customer, String streamTime) {
+        public void addStreamTime(String artistId, String streamTime) {
             try {
                 // convert incoming streamtime string into seconds
                 Long streamTimeSeconds = Instant.parse(streamTime).getEpochSecond();
 
                 // check if this artistId exists, else put it into map
-                if (!customerStreamTimes.containsKey(customer)) {
-                    customerStreamTimes.put(customer, new HashMap<>());
+                if (!streamTimesMap.containsKey(artistId)) {
+                    streamTimesMap.put(artistId, 0L);
                 }
 
                 // index into map, update artist stream time
-                customerStreamTimes.get(customer).put(artistId, streamTimeSeconds + customerStreamTimes.get(customer).get(artistId));
+                streamTimesMap.put(artistId, streamTimeSeconds + streamTimesMap.get(artistId));
+
+                // check if this current artist is not the top
+                if (streamTimesMap.get(artistId) > topArtistTime) {
+                    topArtistTime = streamTimesMap.get(artistId);
+                    topArtistId = artistId;
+                }
             } catch (Exception e) {
                 log.error("Error parsing stream time: {}", streamTime, e);
             }
         }
+    }
 
-        public String topArtistId() {
+    @Data
+    @NoArgsConstructor
+    /**
+     * Used by aggregator to keep track of the top artist and customer's top artist
+     */
+    public static class TopArtistPerCustomer {
+        // key is artist id and value is total stream time
+        private HashMap<Customer, CustomerStreamTime> customerStreamTimes = new HashMap<>();
+        private HashMap<String, Long> totalStreamTimesMap = new HashMap<>();
+        private String topArtistId = "";
+        private Long topArtistTime = 0L;
+
+        public void addStreamTime(String artistId, Customer customer, String streamTime) {
+            // check if customerStreamTimes has this customer
+            if (!customerStreamTimes.containsKey(customer)) {
+                customerStreamTimes.put(customer, new CustomerStreamTime(customer, new HashMap<>(), 0L, artistId));
+            }
+
+            // add this stream
+            customerStreamTimes.get(customer).addStreamTime(artistId, streamTime);
+
+            // add this stream time to this artist
+            try {
+                Long streamTimeSeconds = Instant.parse(streamTime).getEpochSecond();
+                if (!totalStreamTimesMap.containsKey(artistId)) {
+                    totalStreamTimesMap.put(artistId, streamTimeSeconds);
+                } else {
+                    totalStreamTimesMap.put(artistId, totalStreamTimesMap.get(artistId) + streamTimeSeconds);
+                }
+            } catch (Exception e) {
+                log.error("Error parsing stream time: {}", streamTime, e);
+            }
+
+            // check if this artist now has the highest stream time
+            if (totalStreamTimesMap.get(artistId) > topArtistTime) {
+                topArtistTime = totalStreamTimesMap.get(artistId);
+                topArtistId = artistId;
+            }
+        }
+
+        public List<Customer> getTopArtistCustomers() {
             if (customerStreamTimes == null || customerStreamTimes.isEmpty()) {
                 return null;
             }
 
-            Long currMax = 0L;
-            String topArtistId = null;
-
-            // loop over customer stream times and find the top artist
+            List<Customer> result = new ArrayList<>();
+            // loop over all customers and see if they have the current topArtistID as their top
             for (Customer customer : customerStreamTimes.keySet()) {
-                var artistMap = customerStreamTimes.get(customer);
-                for (String artistId : artistMap.keySet()) {
-                    Long curr = artistMap.get(artistId);
-                    if (curr > currMax) {
-                        currMax = curr;
-                        topArtistId = artistId;
-                    }
+                if (Objects.equals(customerStreamTimes.get(customer).getTopArtistId(), topArtistId)) {
+                    result.add(customer);
                 }
             }
-            return topArtistId;
+            return result;
         }
     }
 }

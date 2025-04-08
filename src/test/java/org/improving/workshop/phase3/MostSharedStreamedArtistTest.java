@@ -25,6 +25,7 @@ import javax.xml.crypto.Data;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -55,19 +56,19 @@ public class MostSharedStreamedArtistTest {
         driver = new TopologyTestDriver(streamsBuilder.build(), Streams.buildProperties());
 
         customerInputTopic = driver.createInputTopic(
-            Streams.TOPIC_DATA_DEMO_EVENTS,
+            Streams.TOPIC_DATA_DEMO_CUSTOMERS,
             stringSerializer,
             Streams.SERDE_CUSTOMER_JSON.serializer()
         );
 
         streamInputTopic = driver.createInputTopic(
-            Streams.TOPIC_DATA_DEMO_TICKETS,
+            Streams.TOPIC_DATA_DEMO_STREAMS,
             stringSerializer,
             Streams.SERDE_STREAM_JSON.serializer()
         );
 
         artistInputTopic = driver.createInputTopic(
-            Streams.TOPIC_DATA_DEMO_VENUES,
+            Streams.TOPIC_DATA_DEMO_ARTISTS,
             stringSerializer,
             Streams.SERDE_ARTIST_JSON.serializer()
         );
@@ -75,7 +76,7 @@ public class MostSharedStreamedArtistTest {
         outputTopic = driver.createOutputTopic(
             MostSharedStreamedArtist.OUTPUT_TOPIC,
             stringDerializer,
-            MostSharedStreamedArtist.MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE.deserializer()
+            MostSharedStreamedArtist.MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE.deserializer()
         );
     }
 
@@ -119,29 +120,29 @@ public class MostSharedStreamedArtistTest {
         String artist3 = "artist-3";
 
         // Create the 3 artists
-        artistInputTopic.pipeInput(DataFaker.ARTISTS.generate(artist1));
-        artistInputTopic.pipeInput(DataFaker.ARTISTS.generate(artist2));
-        artistInputTopic.pipeInput(DataFaker.ARTISTS.generate(artist3));
+        artistInputTopic.pipeInput(artist1, DataFaker.ARTISTS.generate(artist1));
+        artistInputTopic.pipeInput(artist2, DataFaker.ARTISTS.generate(artist2));
+        artistInputTopic.pipeInput(artist3, DataFaker.ARTISTS.generate(artist3));
 
         // Round #1
         List<String> round1CustomerIds = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             Customer c = DataFaker.CUSTOMERS.generate();
             round1CustomerIds.add(c.id());
-            customerInputTopic.pipeInput(c);
+            customerInputTopic.pipeInput(c.id(), c);
         }
 
         // Create streams for Round #1
         // artist-1: 3 streams
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(0), artist1));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(1), artist1));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(2), artist1));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round1CustomerIds.get(0), artist1));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round1CustomerIds.get(1), artist1));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round1CustomerIds.get(2), artist1));
 
         // artist-2: 1 stream
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(3), artist2));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round1CustomerIds.get(3), artist2));
 
         // artist-3: 1 stream
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round1CustomerIds.get(4), artist3));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round1CustomerIds.get(4), artist3));
 
         // Advance the wall clock time to end the first window
         driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
@@ -166,19 +167,19 @@ public class MostSharedStreamedArtistTest {
         for (int i = 0; i < 4; i++) {
             Customer c = DataFaker.CUSTOMERS.generate();
             round2CustomerIds.add(c.id());
-            customerInputTopic.pipeInput(c);
+            customerInputTopic.pipeInput(c.id(), c);
         }
 
         // Create streams for Round #2
         // artist-1: 0 streams
 
         // artist-2: 3 streams
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(0), artist2));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(1), artist2));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(2), artist2));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(0), artist2));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(1), artist2));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(2), artist2));
 
         // artist-3: 1 stream
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round2CustomerIds.get(3), artist3));
+        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(3), artist3));
 
         // Advance the wall clock time to end the second window
         driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
@@ -204,21 +205,21 @@ public class MostSharedStreamedArtistTest {
         for (int i = 0; i < 9; i++) {
             Customer c = DataFaker.CUSTOMERS.generate();
             round3CustomerIds.add(c.id());
-            customerInputTopic.pipeInput(c);
+            customerInputTopic.pipeInput(c.id() , c);
         }
 
         // Create streams for Round #3
         // artist-1: 3 streams
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(0), artist1));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(1), artist1));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(2), artist1));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(0), artist1));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(1), artist1));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(2), artist1));
 
         // artist-2: 1 stream
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(3), artist2));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(3), artist2));
 
         // artist-3: 5 streams
         for (int i = 4; i < 9; i++) {
-            streamInputTopic.pipeInput(DataFaker.STREAMS.generate(round3CustomerIds.get(i), artist3));
+            streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(i), artist3));
         }
 
         // Advance the wall clock time to end the third window
