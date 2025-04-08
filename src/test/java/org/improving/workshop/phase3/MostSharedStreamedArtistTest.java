@@ -16,12 +16,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.msse.demo.mockdata.customer.profile.Customer;
 import org.msse.demo.mockdata.music.artist.Artist;
-import org.msse.demo.mockdata.music.event.Event;
 import org.msse.demo.mockdata.music.stream.Stream;
-import org.msse.demo.mockdata.music.ticket.Ticket;
-import org.msse.demo.mockdata.music.venue.Venue;
-
-import javax.xml.crypto.Data;
+import org.springframework.kafka.support.serializer.JsonSerde;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,7 +28,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class MostSharedStreamedArtistTest {
     private final static Serializer<String> stringSerializer = Serdes.String().serializer();
-    private final static Deserializer<String> stringDerializer = Serdes.String().deserializer();
+    private final static Deserializer<String> stringDeserializer = Serdes.String().deserializer();
+
+    // Define the missing serde for List<Customer>
+    public static final JsonSerde<List<Customer>> SERDE_LIST_CUSTOMER_JSON = new JsonSerde<>(List.class);
 
     private TopologyTestDriver driver;
 
@@ -49,7 +48,7 @@ public class MostSharedStreamedArtistTest {
         // instantiate new builder
         StreamsBuilder streamsBuilder = new StreamsBuilder();
 
-        // build the RemainingEventTickets topology (by reference)
+        // build the topology
         MostSharedStreamedArtist.configureTopology(streamsBuilder);
 
         // build the TopologyTestDriver
@@ -75,7 +74,7 @@ public class MostSharedStreamedArtistTest {
 
         outputTopic = driver.createOutputTopic(
             MostSharedStreamedArtist.OUTPUT_TOPIC,
-            stringDerializer,
+            stringDeserializer,
             MostSharedStreamedArtist.MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE.deserializer()
         );
     }
@@ -87,7 +86,7 @@ public class MostSharedStreamedArtistTest {
 
     @Test
     @DisplayName("most shared streamed artist test")
-    void testMostProfitableVenue() {
+    void testMostSharedStreamedArtist() {
         /**
          * Have 3 artists, artist-1, artist-2, artist-3
          * - will attempt to have them shuffle through to show tumbling window
@@ -120,15 +119,21 @@ public class MostSharedStreamedArtistTest {
         String artist3 = "artist-3";
 
         // Create the 3 artists
-        artistInputTopic.pipeInput(artist1, DataFaker.ARTISTS.generate(artist1));
-        artistInputTopic.pipeInput(artist2, DataFaker.ARTISTS.generate(artist2));
-        artistInputTopic.pipeInput(artist3, DataFaker.ARTISTS.generate(artist3));
+        Artist artist1Obj = DataFaker.ARTISTS.generate(artist1);
+        Artist artist2Obj = DataFaker.ARTISTS.generate(artist2);
+        Artist artist3Obj = DataFaker.ARTISTS.generate(artist3);
+
+        artistInputTopic.pipeInput(artist1, artist1Obj);
+        artistInputTopic.pipeInput(artist2, artist2Obj);
+        artistInputTopic.pipeInput(artist3, artist3Obj);
 
         // Round #1
         List<String> round1CustomerIds = new ArrayList<>();
+        List<Customer> round1Customers = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             Customer c = DataFaker.CUSTOMERS.generate();
             round1CustomerIds.add(c.id());
+            round1Customers.add(c);
             customerInputTopic.pipeInput(c.id(), c);
         }
 
@@ -149,7 +154,7 @@ public class MostSharedStreamedArtistTest {
 
         // Verify Round #1 results
         var outputRecords = outputTopic.readRecordsToList();
-        TestRecord<String, MostSharedStreamedArtist.MostSharedStreamedArtistResult> round1Result = outputRecords.getLast();
+        TestRecord<String, MostSharedStreamedArtist.MostSharedStreamedArtistResult> round1Result = outputRecords.get(outputRecords.size() - 1);
 
         assertEquals(artist1, round1Result.key());
         assertEquals(artist1, round1Result.value().getArtistId());
@@ -164,9 +169,11 @@ public class MostSharedStreamedArtistTest {
 
         // Round #2
         List<String> round2CustomerIds = new ArrayList<>();
+        List<Customer> round2Customers = new ArrayList<>();
         for (int i = 0; i < 4; i++) {
             Customer c = DataFaker.CUSTOMERS.generate();
             round2CustomerIds.add(c.id());
+            round2Customers.add(c);
             customerInputTopic.pipeInput(c.id(), c);
         }
 
@@ -174,12 +181,12 @@ public class MostSharedStreamedArtistTest {
         // artist-1: 0 streams
 
         // artist-2: 3 streams
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(0), artist2));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(1), artist2));
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(2), artist2));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(0), artist2));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(1), artist2));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(2), artist2));
 
         // artist-3: 1 stream
-        streamInputTopic.pipeInput(DataFaker.STREAMS.generate(UUID.randomUUID().toString(), round2CustomerIds.get(3), artist3));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(3), artist3));
 
         // Advance the wall clock time to end the second window
         driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
@@ -202,10 +209,12 @@ public class MostSharedStreamedArtistTest {
 
         // Round #3
         List<String> round3CustomerIds = new ArrayList<>();
+        List<Customer> round3Customers = new ArrayList<>();
         for (int i = 0; i < 9; i++) {
             Customer c = DataFaker.CUSTOMERS.generate();
             round3CustomerIds.add(c.id());
-            customerInputTopic.pipeInput(c.id() , c);
+            round3Customers.add(c);
+            customerInputTopic.pipeInput(c.id(), c);
         }
 
         // Create streams for Round #3
