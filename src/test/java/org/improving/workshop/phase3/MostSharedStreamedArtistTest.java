@@ -149,9 +149,6 @@ public class MostSharedStreamedArtistTest {
         // artist-3: 1 stream
         streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round1CustomerIds.get(4), artist3));
 
-        // Advance the wall clock time to end the first window
-        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
-
         // Verify Round #1 results
         var outputRecords = outputTopic.readRecordsToList();
         TestRecord<String, MostSharedStreamedArtist.MostSharedStreamedArtistResult> round1Result = outputRecords.get(outputRecords.size() - 1);
@@ -176,6 +173,8 @@ public class MostSharedStreamedArtistTest {
         }
 
         // Create streams for Round #2
+        // Advance the wall clock time to end the third window
+        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
         // artist-1: 0 streams
 
         // artist-2: 3 streams
@@ -185,9 +184,6 @@ public class MostSharedStreamedArtistTest {
 
         // artist-3: 1 stream
         streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(3), artist3));
-
-        // Advance the wall clock time to end the second window
-        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
 
         // Verify Round #2 results
         outputRecords = outputTopic.readRecordsToList();
@@ -204,6 +200,8 @@ public class MostSharedStreamedArtistTest {
         assertTrue(resultCustomerIds.contains(round2CustomerIds.get(2)));
 
         // Round #3
+        // Advance the wall clock time to end the third window
+        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
         List<String> round3CustomerIds = new ArrayList<>();
         List<Customer> round3Customers = new ArrayList<>();
         for (int i = 0; i < 9; i++) {
@@ -226,9 +224,6 @@ public class MostSharedStreamedArtistTest {
         for (int i = 4; i < 9; i++) {
             streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(i), artist3));
         }
-
-        // Advance the wall clock time to end the third window
-        driver.advanceWallClockTime(java.time.Duration.ofMinutes(5));
 
         // Verify Round #3 results
         outputRecords = outputTopic.readRecordsToList();
