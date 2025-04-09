@@ -4,6 +4,7 @@ import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
+import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
 import org.apache.kafka.streams.state.WindowStore;
@@ -24,8 +25,8 @@ public class MostSharedStreamedArtist {
     public static final String OUTPUT_TOPIC = "kafka-workshop-most-shared-streamed-artist";
 
     public static final JsonSerde<MostSharedStreamedArtistResult> MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE = new JsonSerde<>(MostSharedStreamedArtistResult.class);
-
-    public static final JsonSerde<TopArtistPerCustomer> TOP_ARTIST_PER_CUSTOMER_JSON_SERDE = new JsonSerde<>(TopArtistPerCustomer.class);
+    public static final JsonSerde<CustomerArtistCount> TOP_ARTIST_PER_CUSTOMER_JSON_SERDE = new JsonSerde<>(CustomerArtistCount.class);
+    public static final JsonSerde<TopArtistCount> TOP_ARTIST_COUNT_JSON_SERDE = new JsonSerde<>(TopArtistCount.class);
 
     /**
      * Streams app launched via main => this should implement the Topology for 'finding customers with same #1 artist'
@@ -88,43 +89,64 @@ public class MostSharedStreamedArtist {
             .windowedBy(tumblingWindow)
 
             /**
-             * This aggregate is creating an object which tracks artist stream time per customer
-             * and determines which artist has the highest total stream time
+             * This Aggregate is a SUM on streamtime
+             * to find the most streamed artist
              */
             .aggregate(
-                TopArtistPerCustomer::new,
+                CustomerArtistCount::new,
 
-                (customerId, customerStream, aggregate) -> {
-                    log.info("TopArtistPerCustomer {}", aggregate.topArtistCount);
-                    String artistId = customerStream.getStream().artistid();
-                    aggregate.addStreamTime(artistId, customerStream.getCustomer());
-                    log.info("TopArtistPerCustomer AFTER {}", aggregate.topArtistCount);
-                    return aggregate;
+                (customerId, customerStream, customerArtistCount) -> {
+                    if (!customerArtistCount.initialized) {
+                        customerArtistCount.initialize(customerStream.getCustomer());
+                    }
+                    customerArtistCount.incrementStreamCount(customerStream.getStream().artistid());
+                    return customerArtistCount;
                 },
-                Materialized.<String, TopArtistPerCustomer, WindowStore<Bytes, byte[]>>as("top-artist-per-customer-store")
+                Materialized
+                    .<String, CustomerArtistCount, WindowStore<Bytes, byte[]>>as("customer-artist-table")
                     .withKeySerde(Serdes.String())
                     .withValueSerde(TOP_ARTIST_PER_CUSTOMER_JSON_SERDE)
             )
-
             .toStream()
 
-            .peek((windowKey, topArtistPerCustomer) -> log.info("WindowKey: `{}` with topArtistPerCustomer: {}", windowKey, topArtistPerCustomer))
+            .peek((windowedCustomerId, customerArtistCount) -> log.info("WindowedCustomerId: {} with count {}", windowedCustomerId, customerArtistCount.topArtistCount))
 
-            // Extract just the key without the window information
-            .selectKey((windowKey, topArtistPerCustomer) -> topArtistPerCustomer.getTopArtistId())
+            // TODO using stored CustomerArtistCount aggregates, we need to aggregate over them and find the global top shared artist
+            .selectKey((windowedCustomerId, customerArtistCount) -> "global")
 
-            .peek((artistId, topArtistPerCustomer) -> log.info("Artist ID: {}, Artist Count: {}", artistId, topArtistPerCustomer.getTopArtistCount()))
+            // group by artistId and collect list of customerIds
+            .groupByKey()
 
-            // join the artist into our streamedArtistResult
+            // now aggregate the top artists for this window. This will produce a top artist and it's list of customers
+            .aggregate(
+                TopArtistCount::new,
+                (globalKey, customerArtistCount, topArtistCount) -> {
+                    String artistId = customerArtistCount.getTopStreamedArtistId();
+                    Customer customer = customerArtistCount.getCustomer();
+                    topArtistCount.addStream(artistId, customer);
+                    log.info("Adding Customer {} to artistID {} in GLOBAL", customer.id(), artistId);
+                    return topArtistCount;
+                },
+
+                Materialized
+                    .<String, TopArtistCount>as(persistentKeyValueStore("artist-count-table"))
+                    .withKeySerde(Serdes.String())
+                    .withValueSerde(TOP_ARTIST_COUNT_JSON_SERDE)
+            )
+            .toStream()
+
+            .selectKey((artistId, topArtistCount) -> topArtistCount.currentTopArtistId)
+            .peek((topArtistId, topArtistCount) -> log.info("TopArtistID {}", topArtistId))
+
+            // TODO once global top shared artist is found, join it on artistId and the artistKtable
+            // Join with customers table to get customer information
             .join(
                 artistKTable,
-                (topArtistPerCustomer, artist) -> {
-                    List<Customer> customers = topArtistPerCustomer.getTopArtistCustomers();
-                    return new MostSharedStreamedArtistResult(artist.id(), artist, customers);
-                }
+                (topArtistId, topArtistCount, artist) -> new MostSharedStreamedArtistResult(topArtistId, artist, topArtistCount.getTopArtistCustomerList()),
+                Joined.with(Serdes.String(), TOP_ARTIST_COUNT_JSON_SERDE, SERDE_ARTIST_JSON)
             )
 
-            .peek((artistId, result) -> log.info("Final result - ArtistId: {} with {} customers", artistId, result.customerList.size()))
+            .peek((artistId, mostSharedStreamedArtistResult) -> log.info("TopArtistID {} has {}", artistId, mostSharedStreamedArtistResult))
 
             .to(OUTPUT_TOPIC, Produced.with(Serdes.String(), MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE));
     }
@@ -136,7 +158,7 @@ public class MostSharedStreamedArtist {
     public static class MostSharedStreamedArtistResult {
         private String artistId;
         private Artist artist;
-        private List<Customer> customerList;
+        private List<String> customerList;
     }
 
     /**
@@ -149,74 +171,82 @@ public class MostSharedStreamedArtist {
         private Stream stream;
     }
 
-    /**
-     * Used by aggregator to keep track of the top artist for each customer
-     */
     @Data
-    @NoArgsConstructor
-    public static class TopArtistPerCustomer {
-        // store mapping of customerId, to a map of ArtistId to count
-        private Map<String, Map<String, Integer>> customerArtistStreams = new HashMap<>();
-        // customer Id to artistId
-        private Map<String, String> customerTopArtist = new HashMap<>();
-        // artistId to StreamCount
-        private Map<String, Integer> artistTotalStreams = new HashMap<>();
-        @Getter
-        private String topArtistId = "";
-        private int topArtistCount = 0;
+    @Builder
+    @AllArgsConstructor
+    public static class TopArtistCount {
+        private String currentTopArtistId;
+        private Integer currentTopArtistCount;
+        // store a map from artistId to their streamCount
+        private Map<String, Integer> artistStreamCountMap;
+        private Map<String, Set<String>> artistToCustomerMap;
 
-        // store the customers
-        private Map<String, Customer> customerMap = new HashMap<>();
-
-        public void addStreamTime(String artistId, Customer customer) {
-            String customerId = customer.id();
-            customerMap.putIfAbsent(customerId, customer);
-
-            // init the map if case it's empty
-            customerArtistStreams.putIfAbsent(customer.id(), new HashMap<>());
-
-            // increment this customer's stream count
-            Map<String, Integer> customerStreams = customerArtistStreams.get(customerId);
-            customerStreams.put(artistId, customerStreams.getOrDefault(artistId, 0) + 1);
-
-            // Update the customer's top artist if needed
-            String currentTopArtist = customerTopArtist.getOrDefault(customerId, null);
-            if (currentTopArtist != null) {
-                int currentTopCount = customerStreams.getOrDefault(currentTopArtist, 0);
-                if (customerStreams.get(artistId) > currentTopCount) {
-                    customerTopArtist.put(customerId, artistId);
-                }
-            } else {
-                customerTopArtist.put(customerId, artistId);
-            }
-
-            // Update global artist stream count
-            int artistTotal = artistTotalStreams.getOrDefault(artistId, 0) + 1;
-            artistTotalStreams.put(artistId, artistTotal);
-
-            // Update global top artist if needed
-            if (artistTotal > topArtistCount) {
-                topArtistId = artistId;
-                topArtistCount = artistTotal;
-            }
+        // constructor not init
+        public TopArtistCount() {
+            this.currentTopArtistId = null;
+            this.currentTopArtistCount = 0;
+            this.artistStreamCountMap = new HashMap<>();
+            this.artistToCustomerMap = new HashMap<>();
         }
 
-        public List<Customer> getTopArtistCustomers() {
-            if (topArtistId == null || topArtistId.isEmpty() || customerTopArtist.isEmpty()) {
-                return Collections.emptyList();
+        public void addStream(String artistId, Customer customer) {
+            // check if this venueId exists, else put it into map
+            if (!artistStreamCountMap.containsKey(artistId)) {
+                artistStreamCountMap.put(artistId, 0);
+            }
+            // index into map, update venue revenue map
+            artistStreamCountMap.replace(artistId, artistStreamCountMap.get(artistId) + 1);
+            log.info("Artist Count {}", artistStreamCountMap.get(artistId));
+
+            // check if it's greater than current max then update accordingly
+            if (this.currentTopArtistCount < artistStreamCountMap.get(artistId)) {
+                log.info("Artist Has Greater");
+                this.currentTopArtistCount = artistStreamCountMap.get(artistId);
+                this.currentTopArtistId = artistId;
             }
 
-            List<Customer> result = new ArrayList<>();
-            // Find all customers who have the global top artist as their top artist
-            for (Map.Entry<String, String> entry : customerTopArtist.entrySet()) {
-                if (entry.getValue().equals(topArtistId)) {
-                    Customer customer = customerMap.get(entry.getKey());
-                    if (customer != null) {
-                        result.add(customer);
-                    }
-                }
+            // add this customer
+            artistToCustomerMap.computeIfAbsent(artistId, k -> new HashSet<>()).add(customer.id());
+            log.info("Artist Customer List {}", artistToCustomerMap.get(artistId));
+        }
+
+        public List<String> getTopArtistCustomerList() {
+            Set<String> set = artistToCustomerMap.get(this.currentTopArtistId);
+            return (set != null) ? new ArrayList<>(set) : Collections.emptyList();
+        }
+    }
+
+    @Data
+    @AllArgsConstructor
+    public static class CustomerArtistCount {
+        private boolean initialized;
+        private String customerId;
+        private Customer customer;
+        private Map<String, Integer> streamCount;
+        @Getter
+        private String topStreamedArtistId;
+        private Integer topArtistCount;
+
+        public CustomerArtistCount() { initialized = false; }
+
+        public void initialize(Customer customer) {
+            this.initialized = true;
+            this.customerId = customer.id();
+            this.customer = customer;
+            this.streamCount = new HashMap<>();
+            this.topStreamedArtistId = "";
+            this.topArtistCount = 0;
+        }
+
+        public void incrementStreamCount(String artistId) {
+            streamCount.put(artistId, streamCount.getOrDefault(artistId, 0) + 1);
+
+            // check if count is greater now
+            if (streamCount.get(artistId) > topArtistCount) {
+                log.info("New TopArtist {} for Customer {}", artistId, customerId);
+                topArtistCount = streamCount.get(artistId);
+                topStreamedArtistId = artistId;
             }
-            return result;
         }
     }
 }

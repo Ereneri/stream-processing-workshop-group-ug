@@ -160,9 +160,7 @@ public class MostSharedStreamedArtistTest {
         assertEquals(artist1, round1Result.value().getArtistId());
         assertEquals(3, round1Result.value().getCustomerList().size());
         // Verify the right customers are in the result
-        List<String> resultCustomerIds = round1Result.value().getCustomerList().stream()
-            .map(Customer::id)
-            .toList();
+        List<String> resultCustomerIds = round1Result.value().getCustomerList();
         assertTrue(resultCustomerIds.contains(round1CustomerIds.get(0)));
         assertTrue(resultCustomerIds.contains(round1CustomerIds.get(1)));
         assertTrue(resultCustomerIds.contains(round1CustomerIds.get(2)));
@@ -200,9 +198,7 @@ public class MostSharedStreamedArtistTest {
         assertEquals(artist2, round2Result.value().getArtistId());
         assertEquals(3, round2Result.value().getCustomerList().size());
         // Verify the right customers are in the result
-        resultCustomerIds = round2Result.value().getCustomerList().stream()
-            .map(Customer::id)
-            .toList();
+        resultCustomerIds = round2Result.value().getCustomerList();
         assertTrue(resultCustomerIds.contains(round2CustomerIds.get(0)));
         assertTrue(resultCustomerIds.contains(round2CustomerIds.get(1)));
         assertTrue(resultCustomerIds.contains(round2CustomerIds.get(2)));
@@ -243,9 +239,7 @@ public class MostSharedStreamedArtistTest {
         assertEquals(artist3, round3Result.value().getArtistId());
         assertEquals(5, round3Result.value().getCustomerList().size());
         // Verify the right customers are in the result
-        resultCustomerIds = round3Result.value().getCustomerList().stream()
-            .map(Customer::id)
-            .toList();
+        resultCustomerIds = round3Result.value().getCustomerList();
         for (int i = 4; i < 9; i++) {
             assertTrue(resultCustomerIds.contains(round3CustomerIds.get(i)));
         }
