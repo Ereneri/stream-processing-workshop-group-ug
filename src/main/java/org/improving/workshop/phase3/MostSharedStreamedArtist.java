@@ -62,7 +62,7 @@ public class MostSharedStreamedArtist {
                     .withValueSerde(SERDE_ARTIST_JSON)
             );
 
-        TimeWindows tumblingWindow = TimeWindows.of(Duration.ofMinutes(5));
+        TimeWindows tumblingWindow = TimeWindows.of(java.time.Duration.ofMinutes(5));
 
         customerKTable.toStream().peek((key, customer) -> log.info("Customer added with ID '{}'", customer.id()));
         artistKTable.toStream().peek((key, artist) -> log.info("Artist added with ID '{}'", artist.id()));
@@ -86,6 +86,7 @@ public class MostSharedStreamedArtist {
             // Group by customer ID
             .groupByKey()
 
+            // now we need to aggregate over the tumbling window
             .windowedBy(tumblingWindow)
 
             /**
@@ -107,19 +108,23 @@ public class MostSharedStreamedArtist {
                     .withKeySerde(Serdes.String())
                     .withValueSerde(TOP_ARTIST_PER_CUSTOMER_JSON_SERDE)
             )
-            .toStream()
+            .toStream((Windowed windowedKey, CustomerArtistCount customerArtistCount) -> windowedKey.toString())
+            .peek((windowedCustomerId, topArtistCount) -> log.info("windowedCustomerId {}", windowedCustomerId))
 
-            .peek((windowedCustomerId, customerArtistCount) -> log.info("WindowedCustomerId: {} with count {}", windowedCustomerId, customerArtistCount.topArtistCount))
-
-            // TODO using stored CustomerArtistCount aggregates, we need to aggregate over them and find the global top shared artist
+            // using stored CustomerArtistCount aggregate, we need to aggregate over them and find the global top shared artist for a tumbling window
             .selectKey((windowedCustomerId, customerArtistCount) -> "global")
+            .peek((globalKey, topArtistCount) -> log.info("global {}", globalKey))
 
             // group by artistId and collect list of customerIds
             .groupByKey()
 
-            // now aggregate the top artists for this window. This will produce a top artist and it's list of customers
+            // now we need to aggregate over the tumbling window again here since they don't carry the previous global top artists
+            .windowedBy(tumblingWindow)
+
+            // now aggregate the top artists for this window. This will produce a top artist, and it's list of customers
             .aggregate(
                 TopArtistCount::new,
+
                 (globalKey, customerArtistCount, topArtistCount) -> {
                     String artistId = customerArtistCount.getTopStreamedArtistId();
                     Customer customer = customerArtistCount.getCustomer();
@@ -127,18 +132,16 @@ public class MostSharedStreamedArtist {
                     log.info("Adding Customer {} to artistID {} in GLOBAL", customer.id(), artistId);
                     return topArtistCount;
                 },
-
                 Materialized
-                    .<String, TopArtistCount>as(persistentKeyValueStore("artist-count-table"))
+                    .<String, TopArtistCount, WindowStore<Bytes, byte[]>>as("artist-count-table")
                     .withKeySerde(Serdes.String())
                     .withValueSerde(TOP_ARTIST_COUNT_JSON_SERDE)
             )
-            .toStream()
+            .toStream((Windowed windowedKey, TopArtistCount topArtistCount) -> windowedKey.toString())
 
             .selectKey((artistId, topArtistCount) -> topArtistCount.currentTopArtistId)
             .peek((topArtistId, topArtistCount) -> log.info("TopArtistID {}", topArtistId))
 
-            // TODO once global top shared artist is found, join it on artistId and the artistKtable
             // Join with customers table to get customer information
             .join(
                 artistKTable,
@@ -196,18 +199,18 @@ public class MostSharedStreamedArtist {
             }
             // index into map, update venue revenue map
             artistStreamCountMap.replace(artistId, artistStreamCountMap.get(artistId) + 1);
-            log.info("Artist Count {}", artistStreamCountMap.get(artistId));
+            log.info("Artist {} Count {}", artistId, artistStreamCountMap.get(artistId));
 
             // check if it's greater than current max then update accordingly
             if (this.currentTopArtistCount < artistStreamCountMap.get(artistId)) {
-                log.info("Artist Has Greater");
+                log.info("Artist {} Has Greater", artistId);
                 this.currentTopArtistCount = artistStreamCountMap.get(artistId);
                 this.currentTopArtistId = artistId;
             }
 
             // add this customer
             artistToCustomerMap.computeIfAbsent(artistId, k -> new HashSet<>()).add(customer.id());
-            log.info("Artist Customer List {}", artistToCustomerMap.get(artistId));
+            log.info("Artist {} Customer List {}", artistId, artistToCustomerMap.get(artistId));
         }
 
         public List<String> getTopArtistCustomerList() {
