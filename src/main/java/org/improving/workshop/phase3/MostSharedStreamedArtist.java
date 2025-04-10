@@ -62,7 +62,7 @@ public class MostSharedStreamedArtist {
                     .withValueSerde(SERDE_ARTIST_JSON)
             );
 
-        // Setup a tumbling window, this should have the interior aggregates only have data from within that 5-minute window
+        // Set up a tumbling window, this should have the interior aggregates only have data from within that 5-minute window
         TimeWindows tumblingWindow = TimeWindows.of(java.time.Duration.ofMinutes(5));
 
         // Log out customer and art for ktables
@@ -111,11 +111,9 @@ public class MostSharedStreamedArtist {
                     .withValueSerde(TOP_ARTIST_PER_CUSTOMER_JSON_SERDE)
             )
             .toStream((Windowed windowedKey, CustomerArtistCount customerArtistCount) -> windowedKey.window().toString())
-            .peek((windowedCustomerId, topArtistCount) -> log.info("windowedCustomerId {}", windowedCustomerId))
 
             // using stored CustomerArtistCount aggregate, we need to aggregate over them and find the global top shared artist for a tumbling window
             .selectKey((windowedCustomerId, customerArtistCount) -> "global")
-            .peek((globalKey, topArtistCount) -> log.info("global {}", globalKey))
 
             // group by artistId and collect list of customerIds
             .groupByKey()
@@ -128,7 +126,7 @@ public class MostSharedStreamedArtist {
                 TopArtistCount::new,
 
                 (globalKey, customerArtistCount, topArtistCount) -> {
-                    String artistId = customerArtistCount.getTopStreamedArtistId();
+                    String artistId = customerArtistCount.getPreviousArtistId();
                     Customer customer = customerArtistCount.getCustomer();
                     topArtistCount.addStream(artistId, customer);
                     log.info("Adding Customer {} to artistID {} in GLOBAL", customer.id(), artistId);
@@ -229,6 +227,7 @@ public class MostSharedStreamedArtist {
         private Customer customer;
         private Map<String, Integer> streamCount;
         @Getter
+        private String previousArtistId;
         private String topStreamedArtistId;
         private Integer topArtistCount;
 
@@ -252,6 +251,8 @@ public class MostSharedStreamedArtist {
                 topArtistCount = streamCount.get(artistId);
                 topStreamedArtistId = artistId;
             }
+            // we store this so our next aggregate can use it to get global max
+            this.previousArtistId = artistId;
         }
     }
 }
