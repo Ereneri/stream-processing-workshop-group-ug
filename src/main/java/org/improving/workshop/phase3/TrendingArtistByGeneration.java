@@ -1,4 +1,4 @@
-package org.improving.workshop.samples;
+package org.improving.workshop.phase3;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -8,11 +8,9 @@ import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.common.utils.Bytes;
-import org.improving.workshop.Streams;
 import org.msse.demo.mockdata.customer.address.Address;
 import org.msse.demo.mockdata.customer.profile.Customer;
 import org.msse.demo.mockdata.music.artist.Artist;
-import org.msse.demo.mockdata.music.stream.Stream;
 import org.springframework.kafka.support.serializer.JsonSerde;
 
 import java.time.LocalDate;
@@ -22,7 +20,6 @@ import java.util.Map;
 import static java.util.stream.Collectors.toMap;
 import static java.util.Collections.reverseOrder;
 
-import static org.apache.kafka.streams.state.Stores.persistentKeyValueStore;
 import static org.improving.workshop.Streams.*;
 
 @Slf4j
