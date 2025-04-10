@@ -62,8 +62,10 @@ public class MostSharedStreamedArtist {
                     .withValueSerde(SERDE_ARTIST_JSON)
             );
 
+        // Setup a tumbling window, this should have the interior aggregates only have data from within that 5-minute window
         TimeWindows tumblingWindow = TimeWindows.of(java.time.Duration.ofMinutes(5));
 
+        // Log out customer and art for ktables
         customerKTable.toStream().peek((key, customer) -> log.info("Customer added with ID '{}'", customer.id()));
         artistKTable.toStream().peek((key, artist) -> log.info("Artist added with ID '{}'", artist.id()));
 
@@ -108,7 +110,7 @@ public class MostSharedStreamedArtist {
                     .withKeySerde(Serdes.String())
                     .withValueSerde(TOP_ARTIST_PER_CUSTOMER_JSON_SERDE)
             )
-            .toStream((Windowed windowedKey, CustomerArtistCount customerArtistCount) -> windowedKey.toString())
+            .toStream((Windowed windowedKey, CustomerArtistCount customerArtistCount) -> windowedKey.window().toString())
             .peek((windowedCustomerId, topArtistCount) -> log.info("windowedCustomerId {}", windowedCustomerId))
 
             // using stored CustomerArtistCount aggregate, we need to aggregate over them and find the global top shared artist for a tumbling window

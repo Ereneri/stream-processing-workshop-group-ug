@@ -171,18 +171,15 @@ public class MostSharedStreamedArtistTest {
         }
 
         // Create streams for Round #2
-        // Advance the wall clock time to end the third window
-        driver.advanceWallClockTime(java.time.Duration.ofMinutes(15));
-        ts.plus(java.time.Duration.ofMinutes(15));
         // artist-1: 0 streams
 
         // artist-2: 3 streams
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(0), artist2), ts);
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(1), artist2), ts);
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(2), artist2), ts);
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(0), artist2), ts.plusSeconds(15 * 60));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(1), artist2), ts.plusSeconds(15 * 60));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(2), artist2), ts.plusSeconds(15 * 60));
 
         // artist-3: 1 stream
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(3), artist3));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round2CustomerIds.get(3), artist3), ts.plusSeconds(15 * 60));
 
         // Verify Round #2 results
         outputRecords = outputTopic.readRecordsToList();
@@ -191,7 +188,7 @@ public class MostSharedStreamedArtistTest {
         assertEquals(artist2, round2Result.key());
         assertEquals(artist2, round2Result.value().getArtistId());
         assertEquals(3, round2Result.value().getCustomerList().size());
-        // Verify the right customers are in the result
+        // Verify the rightcustomers are in the result
         resultCustomerIds = round2Result.value().getCustomerList();
         assertTrue(resultCustomerIds.contains(round2CustomerIds.get(0)));
         assertTrue(resultCustomerIds.contains(round2CustomerIds.get(1)));
@@ -211,16 +208,16 @@ public class MostSharedStreamedArtistTest {
 
         // Create streams for Round #3
         // artist-1: 3 streams
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(0), artist1), ts);
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(1), artist1), ts);
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(2), artist1), ts);
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(0), artist1), ts.plusSeconds(30 * 60));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(1), artist1), ts.plusSeconds(30 * 60));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(2), artist1), ts.plusSeconds(30 * 60));
 
         // artist-2: 1 stream
-        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(3), artist2));
+        streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(3), artist2), ts.plusSeconds(30 * 60));
 
         // artist-3: 5 streams
         for (int i = 4; i < 9; i++) {
-            streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(i), artist3));
+            streamInputTopic.pipeInput(UUID.randomUUID().toString(), DataFaker.STREAMS.generate(round3CustomerIds.get(i), artist3), ts.plusSeconds(30 * 60));
         }
 
         // Verify Round #3 results
