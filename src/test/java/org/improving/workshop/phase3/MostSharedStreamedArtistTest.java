@@ -459,6 +459,4 @@ public class MostSharedStreamedArtistTest {
         assertTrue(resultCustomerIds.contains(customerIds.get(3)));
         assertFalse(resultCustomerIds.contains(customerIds.get(4)));
     }
-
-
 }

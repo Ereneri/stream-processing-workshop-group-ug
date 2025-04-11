@@ -194,8 +194,7 @@ public class TrendingArtistByGeneration {
 
             // Convert to stream with window info as part of the key
             .toStream()
-            .peek((windowedKey, artistCounts) -> log.info("Window: {}, Generation: {}, Top Artist: {}",
-                windowedKey.window(), windowedKey.key(), artistCounts.getTopStreamedArtistId()))
+            .peek((windowedKey, artistCounts) -> log.info("Window: {}, Generation: {}, Top Artist: {}", windowedKey.window(), windowedKey.key(), artistCounts.getTopStreamedArtistId()))
 
             // Extract the artist ID to join with artist table
             .selectKey((windowedKey, artistCount) -> artistCount.getTopStreamedArtistId(), Named.as("rekey-by-top-artist"))
@@ -212,6 +211,9 @@ public class TrendingArtistByGeneration {
                 ),
                 Joined.with(Serdes.String(), TRENDING_ARTIST_COUNT_JSON_SERDE, SERDE_ARTIST_JSON)
             )
+
+            // rekey by the generation
+            .selectKey((artistId, result) -> result.getGeneration())
 
             // Log the results
             .peek((artistId, result) -> log.info("Top trending artist for generation {}: {} ({}) with {} streams, most streams from: {}", result.getGeneration(), result.getArtistName(), artistId, result.getStreamCount(), result.getState()))
