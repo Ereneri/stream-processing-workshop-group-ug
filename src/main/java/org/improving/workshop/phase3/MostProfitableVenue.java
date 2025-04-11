@@ -5,12 +5,10 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.serialization.Serdes;
-import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
 import org.improving.workshop.samples.PurchaseEventTicket;
 import org.msse.demo.mockdata.music.event.Event;
-import org.msse.demo.mockdata.music.ticket.Ticket;
 import org.msse.demo.mockdata.music.venue.Venue;
 import org.springframework.kafka.support.serializer.JsonSerde;
 
@@ -18,7 +16,6 @@ import org.springframework.kafka.support.serializer.JsonSerde;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.apache.kafka.streams.state.Stores.persistentKeyValueStore;
@@ -150,7 +147,7 @@ public class MostProfitableVenue {
             // rekey our venueId to be the max
             .selectKey((venueId, mostProfitableVenue) -> mostProfitableVenue.getCurrentMaxVenueId())
 
-            .peek((venueId, mostProfitableVenue) -> log.info("Venue {} has most revenue of ${}", venueId, mostProfitableVenue.getCurrentMaxTotalVenueRevenue()))
+            .peek((venueId, mostProfitableVenue) -> log.info("Venue '{}' is the highest grossing with ${} in revenue", mostProfitableVenue.currentMaxVenueName, mostProfitableVenue.getCurrentMaxTotalVenueRevenue()))
 
             .to(OUTPUT_TOPIC, Produced.with(Serdes.String(), MOST_PROFITABLE_VENUE_EVENT_JSON_SERDE));
     }
@@ -159,7 +156,6 @@ public class MostProfitableVenue {
     @Data
     @Builder
     @AllArgsConstructor
-    // TODO update so we save a map of the venues and a current max
     public static class MostProfitableVenueEvent {
         private String currentMaxVenueId;
         private String currentMaxVenueName;

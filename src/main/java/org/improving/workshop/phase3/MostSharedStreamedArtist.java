@@ -149,7 +149,7 @@ public class MostSharedStreamedArtist {
                 Joined.with(Serdes.String(), TOP_ARTIST_COUNT_JSON_SERDE, SERDE_ARTIST_JSON)
             )
 
-            .peek((artistId, mostSharedStreamedArtistResult) -> log.info("TopArtistID {} has {}", artistId, mostSharedStreamedArtistResult))
+            .peek((artistId, mostSharedStreamedArtistResult) -> log.info("The Most Popular Artist '{}', these customer share this artist as their top artist {}", mostSharedStreamedArtistResult.getArtist().name(), mostSharedStreamedArtistResult.getCustomerList()))
 
             .to(OUTPUT_TOPIC, Produced.with(Serdes.String(), MOST_SHARED_STREAMED_ARTIST_RESULT_JSON_SERDE));
     }
