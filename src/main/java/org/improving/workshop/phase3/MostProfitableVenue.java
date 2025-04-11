@@ -39,6 +39,7 @@ public class MostProfitableVenue {
         // configure the processing topology
         configureTopology(builder);
 
+        // fire up engine
         startStreams(builder);
     }
 
