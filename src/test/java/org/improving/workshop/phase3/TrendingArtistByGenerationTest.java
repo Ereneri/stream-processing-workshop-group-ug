@@ -367,13 +367,32 @@ public class TrendingArtistByGenerationTest {
         artistInputTopic.pipeInput(kendrickLamar.id(), kendrickLamar);
 
         // Define different states to use
-        String[] states = {"Minnesota", "Wisconsin", "Illinois"};
+        String[] states = {
+            "Minnesota",
+            "Minnesota",
+            "Minnesota",
+            "Minnesota",
+            "Minnesota",
+            "Minnesota",
+            "Wisconsin",
+            "Wisconsin",
+            "Wisconsin",
+            "Wisconsin",
+            "Wisconsin",
+            "Wisconsin",
+            "Illinois",
+            "Illinois",
+            "Illinois",
+            "Illinois",
+            "Illinois",
+            "Illinois",
+        };
 
         // create all the customers and their addresses
         List<String> customerIds = new ArrayList<>();
         HashMap<String, List<Customer>> generationToCustomers = new HashMap<>();
         HashMap<String, Address> customerIdToAddressMap = new HashMap<>();
-        
+
         for (int i = 0; i < 18; i++) {
             Customer pseudoCustomer = DataFaker.CUSTOMERS.generate();
             // create customer birthday based on this format '2011-12-03'
@@ -392,19 +411,19 @@ public class TrendingArtistByGenerationTest {
                 pseudoCustomer.joindt()
             );
             customerIds.add(c.id());
-            
+
             // add this customer to the bucket for their generation
             List<Customer> list = generationToCustomers.computeIfAbsent(generations[i % 6], k -> new ArrayList<>());
             list.add(c);
             generationToCustomers.put(generations[i % 6], list);
-            
+
             // add customer
             customerInputTopic.pipeInput(c.id(), c);
 
             // create addresses with different states based on index
             // assign state based on customer index to distribute across generations
-            String state = states[i % 3]; // cycle through the states
-            
+            String state = states[i]; // cycle through the states
+
             Address pseudoAddress = DataFaker.ADDRESSES.generateCustomerAddress(c.id());
             Address address = new Address(
                 pseudoAddress.id(),
@@ -429,7 +448,7 @@ public class TrendingArtistByGenerationTest {
         Instant ts = Instant.now();
 
         // Create streams to make specific artists most popular in each state for each generation
-        
+
         // Pre-boomers - Wisconsin has most streams for Elvis Presley
         var preboomers = generationToCustomers.get(TrendingArtistByGeneration.PRE_BOOMER);
         for (Customer customer : preboomers) {
@@ -546,9 +565,9 @@ public class TrendingArtistByGenerationTest {
     }
 
     // Helper method to find the last record for a specific generation
-    private org.apache.kafka.streams.test.TestRecord<String, TrendingArtistByGeneration.TrendingArtistResult> 
-        findLastRecordForGeneration(List<org.apache.kafka.streams.test.TestRecord<String, TrendingArtistByGeneration.TrendingArtistResult>> records, 
-                                 String generation) {
+    private org.apache.kafka.streams.test.TestRecord<String, TrendingArtistByGeneration.TrendingArtistResult>
+    findLastRecordForGeneration(List<org.apache.kafka.streams.test.TestRecord<String, TrendingArtistByGeneration.TrendingArtistResult>> records,
+                                String generation) {
         for (int i = records.size() - 1; i >= 0; i--) {
             if (records.get(i).getKey().equals(generation)) {
                 return records.get(i);
