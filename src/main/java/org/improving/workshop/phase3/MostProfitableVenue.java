@@ -15,6 +15,8 @@ import org.msse.demo.mockdata.music.venue.Venue;
 import org.springframework.kafka.support.serializer.JsonSerde;
 
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -107,7 +109,7 @@ public class MostProfitableVenue {
             .toStream()
 
             // rekey venueId
-            .selectKey((eventId, eventProfit) -> eventProfit.getVenueId())
+            .selectKey((eventId, eventProfit) -> "global")
 
             // Group by venueId from our rekey above
             .groupByKey()
@@ -116,9 +118,10 @@ public class MostProfitableVenue {
             .aggregate(
                 MostProfitableVenueEvent::new,
 
-                (venueId, eventProfit, venueEvent) -> {
+                (globalKey, eventProfit, venueEvent) -> {
                     // Add the event revenue to the venue total
-                    venueEvent.addEventRevenue(eventProfit.getProfit(), venueId);
+                    venueEvent.addEventRevenue(eventProfit.getProfit(), eventProfit.venueId);
+                    log.info("Venue '{}' has current profit of '${}'", eventProfit.venueId, venueEvent.getVenueRevenueMap().get(eventProfit.venueId));
                     return venueEvent;
                 },
 
@@ -129,6 +132,8 @@ public class MostProfitableVenue {
             )
 
             .toStream()
+
+            .selectKey((globalKey, venueEvent) -> venueEvent.getCurrentMaxVenueId())
 
             // join out MostProfitableVenueEvent to a Venue => already rekeyed to be venueId
             .peek((venueId, mostProfitableVenueEvent) -> log.info("Venue {} has {}", venueId, mostProfitableVenueEvent))
@@ -176,7 +181,8 @@ public class MostProfitableVenue {
                 venueRevenueMap.put(venueId, 0.0);
             }
             // index into map, update venue revenue map
-            venueRevenueMap.replace(venueId, venueRevenueMap.get(venueId) + eventRevenue);
+            BigDecimal roundedDouble = new BigDecimal((venueRevenueMap.get(venueId) + eventRevenue)).setScale(2, RoundingMode.HALF_UP);
+            venueRevenueMap.replace(venueId, roundedDouble.doubleValue());
 
             // check if it's greater than current max then update accordingly
             if (this.currentMaxTotalVenueRevenue < venueRevenueMap.get(venueId)) {
@@ -206,7 +212,7 @@ public class MostProfitableVenue {
         }
 
         public void addTicketPrice(double ticketPrice) {
-            this.profit += ticketPrice;
+            this.profit = ticketPrice;
         }
     }
 }
