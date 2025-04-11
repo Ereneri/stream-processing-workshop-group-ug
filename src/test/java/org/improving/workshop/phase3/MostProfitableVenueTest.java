@@ -142,10 +142,6 @@ public class MostProfitableVenueTest {
             ticketInputTopic.pipeInput(ticket);
         }
 
-        // Process all events
-        driver.advanceWallClockTime(java.time.Duration.ofMillis(100));
-
-        // Read the latest records
         var latestRecords = outputTopic.readRecordsToList();
 
         // should be the 4 new tickets
@@ -242,58 +238,112 @@ public class MostProfitableVenueTest {
         assertEquals(90.0, latestMostProfitableVenueEvent.value().getCurrentMaxTotalVenueRevenue());
         assertEquals(venue0, latestMostProfitableVenueEvent.value().getCurrentMaxVenueId());
         assertEquals("venue-0-name", latestMostProfitableVenueEvent.value().getCurrentMaxVenueName());
+    }
 
-        // new venue 2 will get a few more sales
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-6", 15.4));
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-6", 15.4));
+    @Test
+    @DisplayName("test venue revenue update as new tickets are added")
+    void testVenueRevenueUpdate() {
+        /**
+         * Testing Idea:
+         * Create 3 venues and track how the most profitable venue changes as tickets are added:
+         * - Phase 1: Venue0 starts with highest revenue
+         * - Phase 2: Venue1 takes lead when more tickets are added
+         * - Phase 3: Venue2 becomes most profitable with premium tickets
+         * - Phase 4: Venue0 reclaims top spot with a surge of high-price tickets
+         */
 
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-7", 15.4));
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-7", 15.4));
+        String venue0 = "venue-0";
+        String venue1 = "venue-1";
+        String venue2 = "venue-2";
+        Integer maxCap = 1000;
 
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-8", 15.4));
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-8", 13.0));
+        // Create 3 venues
+        venueInputTopic.pipeInput(venue0, new Venue(venue0, "venue-address-0", "venue-0-name", maxCap));
+        venueInputTopic.pipeInput(venue1, new Venue(venue1, "venue-address-1", "venue-1-name", maxCap));
+        venueInputTopic.pipeInput(venue2, new Venue(venue2, "venue-address-2", "venue-2-name", maxCap));
 
-        outputRecords = outputTopic.readRecordsToList();
+        // Create 2 events for each venue (6 events total)
+        for (int i = 0; i < 6; i++) {
+            String eventId = "event-" + i;
+            String artistId = "artist-" + i;
+            String venueId = (i < 2) ? venue0 : (i < 4) ? venue1 : venue2; // First 2 for venue0, next 2 for venue1, last 2 for venue2
+            eventInputTopic.pipeInput(eventId, DataFaker.EVENTS.generate(eventId, artistId, venueId, maxCap));
+        }
 
-        // should be the 6 new tickets
-        assertEquals(6, outputRecords.size());
+        // Phase 1: Venue0 starts with highest revenue (4 tickets at $50 each = $200)
+        for (int i = 0; i < 4; i++) {
+            Ticket ticket = new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-0", 50.0);
+            ticketInputTopic.pipeInput(ticket);
+        }
 
-        // string will be the venueId
-        latestMostProfitableVenueEvent = outputRecords.getLast();
+        // Add some tickets to other venues too
+        // Venue1: 2 tickets at $40 each = $80
+        for (int i = 0; i < 2; i++) {
+            Ticket ticket = new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-2", 40.0);
+            ticketInputTopic.pipeInput(ticket);
+        }
 
-        assertEquals(venue2, latestMostProfitableVenueEvent.key());
-        assertEquals(180.0, latestMostProfitableVenueEvent.value().getCurrentMaxTotalVenueRevenue());
-        assertEquals(venue2, latestMostProfitableVenueEvent.value().getCurrentMaxVenueId());
-        assertEquals("venue-2-name", latestMostProfitableVenueEvent.value().getCurrentMaxVenueName());
+        // Venue2: 1 ticket at $30 = $30
+        Ticket ticket = new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-4", 30.0);
+        ticketInputTopic.pipeInput(ticket);
 
-        // new venue 0 will get some more, same with venue 1, they will both beat venue 3 but venue will have slightly more
+        // Verify Phase 1 results
+        var phase1Records = outputTopic.readRecordsToList();
+        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> phase1Result = phase1Records.getLast();
 
-        // new event for venue 1
-        eventInputTopic.pipeInput("event-9", DataFaker.EVENTS.generate("event-3", "artist-3", venue1, maxCap));
-        eventInputTopic.pipeInput("event-10", DataFaker.EVENTS.generate("event-4", "artist-4", venue1, maxCap));
+        assertEquals(venue0, phase1Result.key());
+        assertEquals(200.0, phase1Result.value().getCurrentMaxTotalVenueRevenue());
+        assertEquals(venue0, phase1Result.value().getCurrentMaxVenueId());
+        assertEquals("venue-0-name", phase1Result.value().getCurrentMaxVenueName());
 
-        // venue 0 => $200
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-0", 55.));
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-0", 55.0));
+        // Phase 2: Venue1 takes the lead with 5 more tickets at $60 each = $300 + $80 = $380
+        for (int i = 0; i < 5; i++) {
+            Ticket ticket2 = new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-3", 60.0);
+            ticketInputTopic.pipeInput(ticket2);
+        }
 
-        // venue 1 => $222
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-9", 33.0));
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-9", 33.0));
+        // Verify Phase 2 results
+        var phase2Records = outputTopic.readRecordsToList();
+        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> phase2Result = phase2Records.getLast();
 
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-10", 33.0));
-        ticketInputTopic.pipeInput(new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-10", 33.0));
+        assertEquals(venue1, phase2Result.key());
+        assertEquals(380.0, phase2Result.value().getCurrentMaxTotalVenueRevenue());
+        assertEquals(venue1, phase2Result.value().getCurrentMaxVenueId());
+        assertEquals("venue-1-name", phase2Result.value().getCurrentMaxVenueName());
 
-        outputRecords = outputTopic.readRecordsToList();
+        // Phase 3: Venue2 becomes most profitable with 3 premium tickets at $150 each = $450
+        for (int i = 0; i < 3; i++) {
+            Ticket ticket3 = new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-5", 150.0);
+            ticketInputTopic.pipeInput(ticket3);
+        }
 
-        // should be the 6 new tickets
-        assertEquals(6, outputRecords.size());
+        // Verify Phase 3 results
+        var phase3Records = outputTopic.readRecordsToList();
+        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> phase3Result = phase3Records.getLast();
 
-        // string will be the venueId
-        latestMostProfitableVenueEvent = outputRecords.getLast();
+        assertEquals(venue2, phase3Result.key());
+        assertEquals(480.0, phase3Result.value().getCurrentMaxTotalVenueRevenue()); // $30 + $450 = $480
+        assertEquals(venue2, phase3Result.value().getCurrentMaxVenueId());
+        assertEquals("venue-2-name", phase3Result.value().getCurrentMaxVenueName());
 
-        assertEquals(venue1, latestMostProfitableVenueEvent.key());
-        assertEquals(222.0, latestMostProfitableVenueEvent.value().getCurrentMaxTotalVenueRevenue());
-        assertEquals(venue1, latestMostProfitableVenueEvent.value().getCurrentMaxVenueId());
-        assertEquals("venue-1-name", latestMostProfitableVenueEvent.value().getCurrentMaxVenueName());
+        // Phase 4: Venue0 reclaims top spot with 6 tickets at $50 each = $300 + $200 = $500
+        for (int i = 0; i < 6; i++) {
+            Ticket ticket4 = new Ticket(DataFaker.TICKETS.randomId(), "customer", "event-1", 50.0);
+            ticketInputTopic.pipeInput(ticket4);
+        }
+
+        // Verify Phase 4 results
+        var phase4Records = outputTopic.readRecordsToList();
+        TestRecord<String, MostProfitableVenue.MostProfitableVenueEvent> phase4Result = phase4Records.getLast();
+
+        assertEquals(venue0, phase4Result.key());
+        assertEquals(500.0, phase4Result.value().getCurrentMaxTotalVenueRevenue());
+        assertEquals(venue0, phase4Result.value().getCurrentMaxVenueId());
+        assertEquals("venue-0-name", phase4Result.value().getCurrentMaxVenueName());
+
+        // Verify the revenue map contains correct values for all venues
+        assertEquals(500.0, phase4Result.value().getVenueRevenueMap().get(venue0));
+        assertEquals(380.0, phase4Result.value().getVenueRevenueMap().get(venue1));
+        assertEquals(480.0, phase4Result.value().getVenueRevenueMap().get(venue2));
     }
 }
